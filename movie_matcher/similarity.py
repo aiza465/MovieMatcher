@@ -4,11 +4,11 @@ Kept free of any I/O (no print/input) so it can be unit tested directly.
 The CLI layer (cli.py) is the only place that talks to the terminal.
 """
 
-from __future__ import annotations
+import difflib
 
 import pandas as pd
-from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 
 def build_genre_vectors(df: pd.DataFrame) -> tuple:
@@ -88,3 +88,39 @@ def top_n_by_description(df: pd.DataFrame, description_matrix, movie_index: int,
         by=["similarity", "title"], ascending=[False, True]
     )
     return result.head(n)[["title", "overview", "similarity"]].reset_index(drop=True)
+
+def find_movie_index(df: pd.DataFrame, query: str) -> tuple[int | None, str | None]:
+    """Resolve a user-typed title to a row index in `df`.
+
+    Matching strategy (documented per assignment spec section 3.3):
+    1. Normalize the query the same way titles were normalized in data.py
+       (lowercase, strip whitespace) and try an exact match first.
+    2. If no exact match, fall back to difflib.get_close_matches() against
+       every normalized title in the dataset - this catches typos and
+       near-misses (e.g. "incepton" -> "inception") without ever silently
+       answering for a completely different movie: the match still has to
+       clear difflib's similarity cutoff (0.6) to be accepted at all.
+    3. If nothing clears the cutoff, return (None, None) so the caller can
+       print a "movie not found" message instead of guessing.
+
+    Returns:
+        (row_index, matched_title) on success - matched_title is the
+        original (non-normalized) title, so the CLI can confirm it back
+        to the user ("Did you mean 'Inception'?").
+        (None, None) if no reasonable match was found.
+    """
+    query_norm = query.strip().lower()
+
+    exact = df.index[df["title_norm"] == query_norm]
+    if len(exact) > 0:
+        idx = exact[0]
+        return idx, df.loc[idx, "title"]
+
+    close = difflib.get_close_matches(
+        query_norm, df["title_norm"].tolist(), n=1, cutoff=0.6
+    )
+    if not close:
+        return None, None
+
+    idx = df.index[df["title_norm"] == close[0]][0]
+    return idx, df.loc[idx, "title"]
